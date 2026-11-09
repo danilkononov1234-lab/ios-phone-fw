@@ -1,0 +1,57 @@
+name: Build firmware
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: pio-${{ hashFiles('platformio.ini') }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO and esptool
+        run: pip install platformio esptool
+
+      - name: Build
+        run: pio run
+
+      - name: Merge into a single flashable .bin
+        run: |
+          B=.pio/build/tdisplay-s3
+          BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -n1)
+          mkdir -p out
+          python -m esptool --chip esp32s3 merge_bin \
+            -o out/ios-phone-tdisplay-s3-full.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            0x0 $B/bootloader.bin \
+            0x8000 $B/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 $B/firmware.bin
+          cp $B/firmware.bin out/ios-phone-tdisplay-s3-app.bin
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: out/*.bin
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.bin
