@@ -760,6 +760,35 @@ void checkBootButton() {
   }
 }
 
+uint16_t appColorFor(Scr s) {
+  switch (s) {
+    case S_SUB:  return C(255, 149, 0);
+    case S_IR:   return C(255, 59, 48);
+    case S_WIFI: return C(10, 132, 255);
+    case S_SET:  return C(142, 142, 147);
+    case S_CHAM: return C(0, 160, 150);
+    case S_TVBG: return C(28, 28, 30);
+    case S_GAME: return C(90, 60, 200);
+    default:     return C(60, 60, 65);
+  }
+}
+void appOpenAnim(uint16_t col) {
+  for (int f = 1; f <= 8; f++) {
+    int h = 320 * f / 8;
+    cv.fillRect(0, 320 - h, 170, h, col);
+    cv.pushSprite(&lcd, 0, 0);
+    delay(10);
+  }
+}
+void appCloseAnim(uint16_t col) {
+  for (int f = 8; f >= 0; f--) {
+    int h = 320 * f / 8;
+    cv.fillScreen(C(0, 0, 0));
+    cv.fillRect(0, 320 - h, 170, h, col);
+    cv.pushSprite(&lcd, 0, 0);
+    delay(10);
+  }
+}
 void bootAnimation() {
   for (int f = 0; f <= 20; f++) {
     cv.fillScreen(C(0, 0, 0));
