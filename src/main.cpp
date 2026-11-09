@@ -367,6 +367,7 @@ bool chSend(uint16_t cmd, const uint8_t* data = nullptr, uint8_t n = 0) {
 }
 
 void drawCham();
+void unlockAnimation();
 void showBusy(const char* msg) { chStatus = msg; drawCham(); cv.pushSprite(&lcd, 0, 0); }
 
 void chDisconnect() {
