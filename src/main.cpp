@@ -10,6 +10,7 @@
 #include <RadioLib.h>
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
+#include "esp_sleep.h"
 #include <NimBLEDevice.h>
 
 // ======================= PINS =======================
@@ -28,6 +29,7 @@
 #define CC_CS   2
 #define CC_GDO0 10
 #define IR_PIN  1
+#define PIN_BOOT 0
 
 // ======================= DISPLAY =======================
 class LGFX : public lgfx::LGFX_Device {
@@ -130,6 +132,10 @@ bool hit(int tx, int ty, int x, int y, int w, int h) { return tx >= x && tx < x 
 
 // ======================= UI HELPERS =======================
 uint16_t C(uint8_t r, uint8_t g, uint8_t b) { return cv.color565(r, g, b); }
+uint16_t lighten(uint16_t c, uint8_t amt) {
+  uint8_t r = (c >> 11) << 3, g = ((c >> 5) & 63) << 2, b = (c & 31) << 3;
+  return C(min(255, r + amt), min(255, g + amt), min(255, b + amt));
+}
 
 void wallGradient() {
   const Wall &w = walls[wallIdx];
@@ -182,7 +188,12 @@ void appHeader(const char* title) {
 }
 
 // ---- icons
-void iconBase(int x, int y, uint16_t c1) { cv.fillRoundRect(x, y, 40, 40, 10, c1); }
+// iOS27 "Liquid Glass" style: taller corner radius + translucent-looking top sheen
+void iconBase(int x, int y, uint16_t c1) {
+  cv.fillRoundRect(x, y, 40, 40, 13, c1);
+  cv.fillRoundRect(x + 3, y + 3, 34, 15, 10, lighten(c1, 55));
+  cv.drawRoundRect(x, y, 40, 40, 13, lighten(c1, 90));
+}
 void drawIcon(int id, int x, int y) {
   switch (id) {
     case 0: iconBase(x, y, C(255, 149, 0));   // Sub-GHz
@@ -368,6 +379,9 @@ bool chSend(uint16_t cmd, const uint8_t* data = nullptr, uint8_t n = 0) {
 
 void drawCham();
 void unlockAnimation();
+void appOpenAnim(uint16_t col);
+void appCloseAnim(uint16_t col);
+uint16_t appColorFor(Scr s);
 void showBusy(const char* msg) { chStatus = msg; drawCham(); cv.pushSprite(&lcd, 0, 0); }
 
 void chDisconnect() {
@@ -572,6 +586,7 @@ void render() {
   switch (scr) {
     case S_LOCK: drawLock(); break; case S_HOME: drawHome(); break; case S_SUB: drawSub(); break;
     case S_IR: drawIR(); break; case S_WIFI: drawWifi(); break; case S_SET: drawSet(); break; case S_CHAM: drawCham(); break;
+    case S_TVBG: drawTvb(); break; case S_GAME: drawGame(); break;
   }
   cv.pushSprite(&lcd, 0, 0);
 }
@@ -659,8 +674,12 @@ void wifiScan() {
 // ======================= NAVIGATION / TOUCH =======================
 void goTo(Scr s) {
   if (scr == S_SUB && s != S_SUB) sgStop();
+  if (scr == S_TVBG && s != S_TVBG) tvbRunning = false;
+  if (scr == S_HOME && s != S_HOME && s != S_LOCK) appOpenAnim(appColorFor(s));
+  else if (scr != S_HOME && scr != S_LOCK && s == S_HOME) appCloseAnim(appColorFor(scr));
   scr = s; dirty = true;
   if (s == S_WIFI) { wifiScan(); }
+  if (s == S_GAME) snkReset();
 }
 
 void onTap(int x, int y) {
@@ -716,6 +735,31 @@ void handleTouch() {
 }
 
 // ======================= ANIMATIONS =======================
+// ======================= BOOT BUTTON (power) =======================
+bool bootWasDown = false;
+uint32_t bootDownAt = 0;
+bool screenOff = false;
+
+void checkBootButton() {
+  bool down = digitalRead(PIN_BOOT) == LOW;
+  if (down && !bootWasDown) { bootWasDown = true; bootDownAt = millis(); }
+  if (!down && bootWasDown) {
+    uint32_t held = millis() - bootDownAt;
+    bootWasDown = false;
+    if (held > 1500) {
+      // Long press: full power off. Wakes (reboots) on the next BOOT press.
+      lcd.setBrightness(0);
+      esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BOOT, 0);
+      esp_deep_sleep_start();
+    } else {
+      // Short press: toggle screen sleep without rebooting.
+      screenOff = !screenOff;
+      if (screenOff) { lcd.setBrightness(0); }
+      else { lcd.setBrightness(bright); goTo(S_LOCK); }
+    }
+  }
+}
+
 void bootAnimation() {
   for (int f = 0; f <= 20; f++) {
     cv.fillScreen(C(0, 0, 0));
@@ -740,6 +784,7 @@ void unlockAnimation() {
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_LCD_POWER, OUTPUT); digitalWrite(PIN_LCD_POWER, HIGH);
+  pinMode(PIN_BOOT, INPUT_PULLUP);
   lcd.init(); lcd.setRotation(0); lcd.setBrightness(bright);
   cv.setColorDepth(16); cv.setPsram(true);
   if (!cv.createSprite(170, 320)) { cv.setPsram(false); cv.createSprite(170, 320); }
@@ -759,6 +804,8 @@ void setup() {
 }
 
 void loop() {
+  checkBootButton();
+  if (screenOff) { delay(50); return; }
   handleTouch();
   sgService();
   chService();
